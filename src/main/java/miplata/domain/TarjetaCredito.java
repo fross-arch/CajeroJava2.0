@@ -16,6 +16,7 @@ public class TarjetaCredito extends Cuenta {
     private double cupo;
     private double usado;
     private List<DeudaTC> deudas;
+    private CreditCardTier tier = CreditCardTier.NINGUNO;
 
     public TarjetaCredito(String usuario) {
         super(usuario, AccountType.TARJETA_CREDITO);
@@ -39,13 +40,13 @@ public class TarjetaCredito extends Cuenta {
     // ── Activación ───────────────────────────────────────────────────────────
 
     public void activar(CreditCardTier tier) {
+        this.tier = tier;
         this.cupo = tier.getCupo();
         this.usado = 0;
         setEstado(AccountState.ACTIVA);
         guardarMovimiento("Tarjeta de Crédito activada. Cupo: $" +
                 formatPesos(cupo) + " (" + tier.getDescription() + ")");
     }
-
     // ── Cálculo de cuota ─────────────────────────────────────────────────────
 
     /**
@@ -179,4 +180,12 @@ public class TarjetaCredito extends Cuenta {
     private DeudaTC findDeuda(int index) {
         if (index < 0 || index >= deudas.size()) return null;
         return deudas.get(index);
-    }}
+    }
+
+    public void setCupo(double cupo) { this.cupo = cupo; }
+    public void setCupoDisponible(double cupoDisponible) { this.usado = cupo - cupoDisponible; }
+    public CreditCardTier getTier() { return tier; }
+    public void setTier(CreditCardTier tier) { this.tier = tier; }
+
+
+}

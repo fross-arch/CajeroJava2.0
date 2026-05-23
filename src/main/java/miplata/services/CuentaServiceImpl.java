@@ -2,6 +2,10 @@ package miplata.services;
 
 import miplata.domain.*;
 import miplata.domain.enums.CreditCardTier;
+import miplata.persistence.repository.CuentaAhorrosRepositoryMySql;
+import miplata.persistence.repository.CuentaCorrienteRepositoryMySql;
+import miplata.persistence.repository.MovimientoRepositoryMySql;
+import miplata.persistence.repository.TarjetaCreditoRepositoryMySql;
 import miplata.repository.ClienteRepository;
 
 import java.util.List;
@@ -9,9 +13,21 @@ import java.util.List;
 public class CuentaServiceImpl implements CuentaService {
 
     private final ClienteRepository clienteRepository;
+    private final CuentaAhorrosRepositoryMySql cuentaAhorrosRepository;
+    private final CuentaCorrienteRepositoryMySql cuentaCorrienteRepository;
+    private final TarjetaCreditoRepositoryMySql tarjetaCreditoRepository;
+    private final MovimientoRepositoryMySql movimientoRepository;
 
-    public CuentaServiceImpl(ClienteRepository clienteRepository) {
+    public CuentaServiceImpl(ClienteRepository clienteRepository,
+                             CuentaAhorrosRepositoryMySql cuentaAhorrosRepository,
+                             CuentaCorrienteRepositoryMySql cuentaCorrienteRepository,
+                             TarjetaCreditoRepositoryMySql tarjetaCreditoRepository,
+                             MovimientoRepositoryMySql movimientoRepository) {
         this.clienteRepository = clienteRepository;
+        this.cuentaAhorrosRepository = cuentaAhorrosRepository;
+        this.cuentaCorrienteRepository = cuentaCorrienteRepository;
+        this.tarjetaCreditoRepository = tarjetaCreditoRepository;
+        this.movimientoRepository = movimientoRepository;
     }
 
     // ── Depositar ────────────────────────────────────────────────────────────
@@ -21,11 +37,21 @@ public class CuentaServiceImpl implements CuentaService {
         if (tipoCuenta.equalsIgnoreCase("corriente")) {
             CuentaCorriente cc = getCuentaCorriente(usuario);
             if (cc == null) return new OperacionResultado(false, "Cuenta corriente no disponible.");
-            return cc.depositar(monto);
+            OperacionResultado resultado = cc.depositar(monto);
+            if (resultado.isOk()) {
+                movimientoRepository.guardarMovimiento(new Movimiento(usuario, "CORRIENTE", "DEPOSITO", monto));
+                cuentaAhorrosRepository.actualizarSaldo(getCuentaAhorros(usuario));
+            }
+            return resultado;
         }
         CuentaAhorros ca = getCuentaAhorros(usuario);
         if (ca == null) return new OperacionResultado(false, "Cuenta de ahorros no disponible.");
-        return ca.depositar(monto);
+        OperacionResultado resultado = ca.depositar(monto);
+        if (resultado.isOk()) {
+            movimientoRepository.guardarMovimiento(new Movimiento(usuario, "AHORROS", "DEPOSITO", monto));
+            cuentaAhorrosRepository.actualizarSaldo(ca);
+        }
+        return resultado;
     }
 
     // ── Retirar ──────────────────────────────────────────────────────────────
@@ -35,18 +61,27 @@ public class CuentaServiceImpl implements CuentaService {
         if (tipoCuenta.equalsIgnoreCase("corriente")) {
             CuentaCorriente cc = getCuentaCorriente(usuario);
             if (cc == null) return new OperacionResultado(false, "Cuenta corriente no disponible.");
-            return cc.calcularRetiro(monto);
+            OperacionResultado resultado = cc.calcularRetiro(monto);
+            if (resultado.isOk()) {
+                movimientoRepository.guardarMovimiento(new Movimiento(usuario, "CORRIENTE", "RETIRO", monto));
+            }
+            return resultado;
         }
         CuentaAhorros ca = getCuentaAhorros(usuario);
         if (ca == null) return new OperacionResultado(false, "Cuenta de ahorros no disponible.");
-        return ca.calcularRetiro(monto);
+        OperacionResultado resultado = ca.calcularRetiro(monto);
+        if (resultado.isOk()) {
+            movimientoRepository.guardarMovimiento(new Movimiento(usuario, "AHORROS", "RETIRO", monto));
+            cuentaAhorrosRepository.actualizarSaldo(ca);
+        }
+        return resultado;
     }
 
     // ── Transferir ───────────────────────────────────────────────────────────
 
     @Override
     public OperacionResultado transferir(String usuarioOrigen, String tipoCuentaOrigen,
-                                          String usuarioDestino, double monto) {
+                                         String usuarioDestino, double monto) {
         if (!clienteRepository.existeUsuario(usuarioDestino)) {
             return new OperacionResultado(false, "El usuario destinatario no existe.");
         }
@@ -68,7 +103,6 @@ public class CuentaServiceImpl implements CuentaService {
                     "Saldo insuficiente. Tu saldo es $" + cuentaEmisor.formatPesos(cuentaEmisor.getSaldo()));
         }
 
-        // La transferencia siempre llega a la cuenta de ahorros del destinatario
         CuentaAhorros cuentaDestino = getCuentaAhorros(usuarioDestino);
         if (cuentaDestino == null) return new OperacionResultado(false, "Cuenta destino no disponible.");
 
@@ -79,6 +113,9 @@ public class CuentaServiceImpl implements CuentaService {
         cuentaDestino.guardarMovimiento("Transferencia recibida de " + usuarioOrigen +
                 ": $" + cuentaDestino.formatPesos(monto));
 
+        movimientoRepository.guardarMovimiento(new Movimiento(usuarioOrigen, tipoCuentaOrigen.toUpperCase(), "TRANSFERENCIA", monto));
+        cuentaAhorrosRepository.actualizarSaldo(getCuentaAhorros(usuarioOrigen));
+
         return new OperacionResultado(true,
                 "Transferencia exitosa. Nuevo saldo: $" + cuentaEmisor.formatPesos(cuentaEmisor.getSaldo()));
     }
@@ -87,7 +124,7 @@ public class CuentaServiceImpl implements CuentaService {
 
     @Override
     public OperacionResultado trasladarInterno(String usuario, String cuentaOrigen,
-                                                String cuentaDestino, double monto) {
+                                               String cuentaDestino, double monto) {
         if (cuentaOrigen.equalsIgnoreCase(cuentaDestino)) {
             return new OperacionResultado(false, "La cuenta origen y destino no pueden ser la misma.");
         }
@@ -115,9 +152,11 @@ public class CuentaServiceImpl implements CuentaService {
         destino.guardarMovimiento("Traslado desde " + origen.getTipo().getDescription() +
                 ": $" + destino.formatPesos(monto));
 
+        cuentaAhorrosRepository.actualizarSaldo(getCuentaAhorros(usuario));
+
         return new OperacionResultado(true,
                 "Traslado exitoso. Nuevo saldo " + origen.getTipo().getDescription() +
-                ": $" + origen.formatPesos(origen.getSaldo()));
+                        ": $" + origen.formatPesos(origen.getSaldo()));
     }
 
     // ── Activar Cuenta Corriente ─────────────────────────────────────────────
@@ -133,12 +172,17 @@ public class CuentaServiceImpl implements CuentaService {
         if (montoTraslado > ahorros.getSaldo()) {
             return new OperacionResultado(false,
                     "No puedes trasladar más de tu saldo en ahorros ($" +
-                    ahorros.formatPesos(ahorros.getSaldo()) + ").");
+                            ahorros.formatPesos(ahorros.getSaldo()) + ").");
         }
 
         ahorros.setSaldo(ahorros.getSaldo() - montoTraslado);
         ahorros.guardarMovimiento("Traslado a Cuenta Corriente: $" + ahorros.formatPesos(montoTraslado));
         corriente.activar(montoTraslado);
+
+        // Guardar en BD
+        cuentaAhorrosRepository.actualizarSaldo(ahorros);
+        cuentaCorrienteRepository.actualizarSaldo(corriente);
+        movimientoRepository.guardarMovimiento(new Movimiento(usuario, "AHORROS", "TRASLADO", montoTraslado));
 
         return new OperacionResultado(true,
                 "¡Cuenta Corriente activada! Saldo inicial: $" + corriente.formatPesos(montoTraslado));
@@ -153,9 +197,13 @@ public class CuentaServiceImpl implements CuentaService {
         if (tc.isActiva()) return new OperacionResultado(false, "La tarjeta de crédito ya está activa.");
 
         tc.activar(tier);
+
+        // Guardar en BD
+        tarjetaCreditoRepository.actualizarTarjeta(tc);
+
         return new OperacionResultado(true,
                 "¡Tarjeta activada! Cupo aprobado: $" + tc.formatPesos(tc.getCupo()) +
-                " (" + tier.getDescription() + ")");
+                        " (" + tier.getDescription() + ")");
     }
 
     // ── Comprar con TC ───────────────────────────────────────────────────────
@@ -212,24 +260,8 @@ public class CuentaServiceImpl implements CuentaService {
 
     @Override
     public void verMovimientos(String usuario) {
-        CuentaAhorros ca = getCuentaAhorros(usuario);
-        CuentaCorriente cc = getCuentaCorriente(usuario);
-        TarjetaCredito tc = getTarjetaCredito(usuario);
-
-        System.out.println("\n=== Movimientos - Cuenta Ahorros ===");
-        imprimirMovimientos(ca != null ? ca.getMovimientos() : List.of());
-
-        if (cc != null && cc.isActiva()) {
-            System.out.println("\n=== Movimientos - Cuenta Corriente ===");
-            imprimirMovimientos(cc.getMovimientos());
-        }
-        if (tc != null && tc.isActiva()) {
-            System.out.println("\n=== Movimientos - Tarjeta de Crédito ===");
-            imprimirMovimientos(tc.getMovimientos());
-        }
-    }
-
-    private void imprimirMovimientos(List<String> movimientos) {
+        System.out.println("\n=== Movimientos desde base de datos ===");
+        List<miplata.domain.Movimiento> movimientos = movimientoRepository.findByUsuario(usuario);
         if (movimientos.isEmpty()) {
             System.out.println("  Sin movimientos registrados.");
         } else {

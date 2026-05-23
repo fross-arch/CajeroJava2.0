@@ -4,6 +4,7 @@ import miplata.domain.Cliente;
 import miplata.domain.CuentaAhorros;
 import miplata.domain.CuentaCorriente;
 import miplata.domain.TarjetaCredito;
+import miplata.services.outputport.ClientePersistencePort;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -13,7 +14,8 @@ import java.util.Optional;
  * Repositorio en memoria de clientes y sus cuentas.
  * Reemplaza el localStorage del JavaScript original.
  */
-public class ClienteRepository {
+
+    public class ClienteRepository implements ClientePersistencePort {
 
     private final List<Cliente> clientes = new ArrayList<>();
     private final List<CuentaAhorros> cuentasAhorros = new ArrayList<>();
